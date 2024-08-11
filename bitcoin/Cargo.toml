@@ -15,7 +15,7 @@ exclude = ["tests", "contrib"]
 
 # If you change features or optional dependencies in any way please update the "# Cargo features" section in lib.rs as well.
 [features]
-default = [ "std", "secp-recovery" ]
+default = [ "std", "secp-recovery",  "rand-std"]
 std = ["base58/std", "bech32/std", "hashes/std", "hex/std", "internals/std", "io/std", "primitives/std", "secp256k1/std", "units/std", "bitcoinconsensus?/std"]
 rand-std = ["secp256k1/std", "secp256k1/rand", "std"]
 rand = ["secp256k1/rand"]
@@ -67,6 +67,10 @@ required-features = ["std", "bitcoinconsensus"]
 
 [[example]]
 name = "ecdsa-psbt-simple"
+required-features = ["rand-std"]
+
+[[example]]
+name = "musig2"
 required-features = ["rand-std"]
 
 [[example]]
