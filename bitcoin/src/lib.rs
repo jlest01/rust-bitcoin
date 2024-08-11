@@ -96,12 +96,14 @@ pub mod consensus_validation;
 pub(crate) mod crypto;
 pub mod hash_types;
 pub mod merkle_tree;
+pub mod musig2;
 pub mod network;
 pub mod policy;
 pub mod pow;
 pub mod psbt;
 pub mod sign_message;
 pub mod taproot;
+
 
 #[rustfmt::skip]                // Keep public re-exports separate.
 #[doc(inline)]
