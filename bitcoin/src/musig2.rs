@@ -6,13 +6,11 @@
 //! 
 //! Musig2 is a Schnorr-based multi-signature scheme that is designed to be secure and efficient.
 //! It is a two-round protocol that is designed to be secure against rogue-key attacks.
-use core::{convert, fmt, mem};
-#[cfg(feature = "std")]
-use std::error;
+use core::fmt;
 
-use secp256k1::{musig::{new_musig_nonce_pair, MusigAggNonce, MusigKeyAggCache, MusigPubNonce, MusigSecNonce, MusigSession, MusigSessionId, MusigTweakErr}, Message, Secp256k1, SecretKey, Signing, Verification};
+use secp256k1::{musig::{new_musig_nonce_pair, MusigAggNonce, MusigKeyAggCache, MusigPubNonce, MusigSecNonce, MusigSession, MusigSessionId, MusigTweakErr}, Message, Scalar, Secp256k1, SecretKey, Signing, Verification};
 
-use crate::{key::TweakedPublicKey, PublicKey, ScriptBuf, TapTweakHash, XOnlyPublicKey};
+use crate::{key::TweakedPublicKey, ScriptBuf, XOnlyPublicKey};
 
 use crate::address::script_pubkey::ScriptBufExt;
 
@@ -52,35 +50,30 @@ impl fmt::Display for Error {
 #[cfg(feature = "std")]
 impl std::error::Error for Error { }
 
-/// Lorem Ipsum
-pub fn create_musig_key_agg_cache<C: Verification>(secp: &Secp256k1<C>, pubkeys: &Vec<PublicKey>) -> MusigKeyAggCache {
+/// Creates a new [`secp256k1::musig::MusigKeyAggCache`] by supplying a list of PublicKeys used in the session.
+pub fn create_musig_key_agg_cache<C: Verification>(secp: &Secp256k1<C>, pubkeys: &Vec<secp256k1::PublicKey>) -> MusigKeyAggCache {
 
-    let ffi_pubkeys: Vec<secp256k1::PublicKey> = pubkeys.iter().map(|pk| pk.inner).collect();
-
-    let ffi_pubkeys = ffi_pubkeys.as_slice();
+    let pubkeys = pubkeys.as_slice();
     
-    MusigKeyAggCache::new(&secp, ffi_pubkeys)
+    MusigKeyAggCache::new(&secp, pubkeys)
 }
 
-/// Lorem Ipsum
-pub fn tweak_taproot_key<C: Verification>(secp: &Secp256k1<C>, musig_key_agg_cache: &mut MusigKeyAggCache) -> Result<PublicKey, Error>
+/// Apply "x-only" tweaking to a public key in a [`secp256k1::musig::MusigKeyAggCache`].
+pub fn tweak_taproot_key<C: Verification>(secp: &Secp256k1<C>, musig_key_agg_cache: &mut MusigKeyAggCache, tweak: &Scalar) -> Result<secp256k1::PublicKey, Error>
 {
-    let tap_tweak = TapTweakHash::from_key_and_tweak(musig_key_agg_cache.agg_pk(), None);
-    let tweak = tap_tweak.to_scalar();
-
-    match musig_key_agg_cache.pubkey_xonly_tweak_add(secp, &tweak) {
-        Ok(tweaked_key) => Ok(PublicKey::new(tweaked_key)),
+    match musig_key_agg_cache.pubkey_xonly_tweak_add(secp, tweak) {
+        Ok(tweaked_key) => Ok(tweaked_key),
         Err(MusigTweakErr::InvalidTweak) => Err(Error::TweakErr),
     }
 }
 
-/// Lorem Ipsum
+/// Create a new [`ScriptBuf`] for a P2TR output with a tweaked x-only public key.
 pub fn new_p2tr_script_buf(output_key: XOnlyPublicKey) -> ScriptBuf {
     let tweaked_public_key = TweakedPublicKey::dangerous_assume_tweaked(output_key);
     ScriptBuf::new_p2tr_tweaked(tweaked_public_key)
 }
 
-/// Lorem Ipsum
+/// First step in a signing session. Generate a new nonce pair.
 #[cfg(feature = "rand-std")]
 pub fn generate_random_nonce<R: rand::Rng + ?Sized, C: Signing>(
     secp: &Secp256k1<C>, 
@@ -109,7 +102,7 @@ pub fn generate_random_nonce<R: rand::Rng + ?Sized, C: Signing>(
     }
 }
 
-/// Lorem Ipsum
+/// First step in a signing session. Generate a nonce pair from the specified data parameter.
 pub fn generate_nonce_from_slice<C: Signing>(
     secp: &Secp256k1<C>, 
     data: [u8; 32],
@@ -136,15 +129,8 @@ pub fn generate_nonce_from_slice<C: Signing>(
         Err(_) => Err(Error::NonceGenError),
     }
 }
-/// Lorem Ipsum
-/* pub fn aggregate_nonces<C: Signing>(
-    secp: &Secp256k1<C>, 
-    &[MusigPubNonce]) -> MusigAggNonce {
 
-    MusigAggNonce::new(&secp, &nonces)
-} */
-
-/// Lorem Ipsum
+/// Creates a new musig signing session.
 pub fn create_musig_session<C: Signing>(
     secp: &Secp256k1<C>, 
     musig_key_agg_cache: &MusigKeyAggCache, 
@@ -155,68 +141,3 @@ pub fn create_musig_session<C: Signing>(
 
     MusigSession::new(&secp, musig_key_agg_cache, agg_nonce, msg)
 }
-
-/* 
-pub struct NoncePair {
-    sec_nonce: MusigSecNonce,
-    pub pub_nonce: MusigPubNonce,
-}
-
-pub struct MusigData {
-    pub nonce_pair: NoncePair,
-    session: Option<MusigSession>,
-    pub partial_sign: Option<MusigPartialSignature>,
-}
- 
-
-impl MusigData {
-    
-
-    /// Lorem Ipsum
-    pub fn process_nonces<C: Signing>(&mut self, 
-        secp: &Secp256k1<C>, 
-        musig_key_agg_cache: &MusigKeyAggCache, 
-        nonces: &[MusigPubNonce], 
-        msg: Message) -> Result<(), Error> {
-
-        if !nonces.contains(&self.nonce_pair.pub_nonce) {
-            return Err(Error::PubNonceMissing); 
-        }
-
-        let agg_nonce = MusigAggNonce::new(secp, nonces);
-
-        let session = MusigSession::new(&secp, musig_key_agg_cache, agg_nonce, msg);
-
-        self.session = Some(session);
-
-        Ok(())
-    }
-
-    /// Lorem Ipsum
-    pub fn partial_sign<C: Signing>(mut self, 
-        secp: &Secp256k1<C>, 
-        keypair: PrivateKey,
-        musig_key_agg_cache: &MusigKeyAggCache)-> Result<(), Error> {
-
-            let keypair = Keypair::from_secret_key(secp, &keypair.inner);
-
-            if self.session.is_none() {
-                return Err(Error::NullSession);
-            }
-
-            let session = self.session.unwrap();
-
-            let sec_nonce = self.nonce_pair.sec_nonce;
-
-            match session.partial_sign(&secp, sec_nonce, &keypair, &musig_key_agg_cache) {
-                Ok(partial_sign) => {
-                    self.partial_sign = Some(partial_sign);
-                    return Ok(())
-                },
-                Err(_) => {
-                    return Err(Error::PartialSignatureError);
-                }
-            }
-        }
-}
-        */
