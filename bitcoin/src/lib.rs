@@ -96,7 +96,6 @@ pub mod consensus_validation;
 pub(crate) mod crypto;
 pub mod hash_types;
 pub mod merkle_tree;
-pub mod musig2;
 pub mod network;
 pub mod policy;
 pub mod pow;

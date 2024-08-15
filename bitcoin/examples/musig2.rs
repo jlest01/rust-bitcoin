@@ -5,13 +5,16 @@
 use std::str::FromStr;
 
 use bitcoin::locktime::absolute;
-use bitcoin::musig2::create_musig_session;
 use bitcoin::secp256k1::{rand, Secp256k1, SecretKey};
 use bitcoin::sighash::{Prevouts, SighashCache, TapSighashType};
 use bitcoin::{
     transaction, Address, Amount, Network, OutPoint, ScriptBuf, Sequence, TapTweakHash, Transaction, TxIn, TxOut, Txid, Witness, XOnlyPublicKey
 };
+use secp256k1::musig::{new_musig_nonce_pair, MusigAggNonce, MusigKeyAggCache, MusigSession, MusigSessionId};
 use secp256k1::Keypair;
+
+use bitcoin::address::script_pubkey::ScriptBufExt;
+use bitcoin::key::TweakedPublicKey;
 
 const DUMMY_UTXO_AMOUNT: Amount = Amount::from_sat(20_000_000);
 const SPEND_AMOUNT: Amount = Amount::from_sat(5_000_000);
@@ -28,15 +31,15 @@ fn main() {
 
     let public_keys = [public_key_share_1, public_key_share_2];
 
-    let mut musig_key_agg_cache = bitcoin::musig2::create_musig_key_agg_cache(&secp, &public_keys);
+    let mut musig_key_agg_cache = MusigKeyAggCache::new(&secp, &public_keys);
 
     let tap_tweak = TapTweakHash::from_key_and_tweak(musig_key_agg_cache.agg_pk(), None);
     let tweak = tap_tweak.to_scalar();
 
-    let tweaked_public_key = bitcoin::musig2::tweak_taproot_key(&secp, &mut musig_key_agg_cache, &tweak).unwrap();
+    let tweaked_public_key = musig_key_agg_cache.pubkey_xonly_tweak_add(&secp, &tweak).unwrap();
     let x_only_tweaked_public_key = XOnlyPublicKey::from(tweaked_public_key);
 
-    let (dummy_out_point, dummy_utxo) = dummy_unspent_transaction_output(x_only_tweaked_public_key);
+    let (dummy_out_point, dummy_utxo, dummy_script_pubkey) = dummy_unspent_transaction_output(x_only_tweaked_public_key);
 
     let address = receivers_address();
 
@@ -53,7 +56,7 @@ fn main() {
 
     let change = TxOut {
         value: CHANGE_AMOUNT,
-        script_pubkey: bitcoin::musig2::new_p2tr_script_buf(x_only_tweaked_public_key), // Change comes back to us.
+        script_pubkey: dummy_script_pubkey, // Change comes back to us.
     };
 
     // The transaction we want to sign and broadcast.
@@ -78,18 +81,22 @@ fn main() {
     let msg_bytes = sighash.to_byte_array();
     let msg = secp256k1::Message::from(sighash);
 
-    let nonce_pair1 = bitcoin::musig2::generate_random_nonce(
+    let musig_session_id = MusigSessionId::new(&mut rand::thread_rng());
+
+    let nonce_pair1 = new_musig_nonce_pair(
         &secp, 
-        &mut rand::thread_rng(),
+        musig_session_id, 
         Some(&musig_key_agg_cache),
         Some(secret_key_share_1), 
         public_key_share_1, 
         Some(msg), 
         None).unwrap();
 
-    let nonce_pair2 = bitcoin::musig2::generate_random_nonce(
+    let musig_session_id = MusigSessionId::new(&mut rand::thread_rng());
+
+    let nonce_pair2 = new_musig_nonce_pair(
         &secp, 
-        &mut rand::thread_rng(),
+        musig_session_id, 
         Some(&musig_key_agg_cache),
         Some(secret_key_share_2), 
         public_key_share_2, 
@@ -102,7 +109,9 @@ fn main() {
     let sec_nonce2 = nonce_pair2.0;
     let pub_nonce2 = nonce_pair2.1;
 
-    let session = create_musig_session(&secp, &musig_key_agg_cache, &[pub_nonce1, pub_nonce2], msg);
+    let agg_nonce = MusigAggNonce::new(&secp, &[pub_nonce1, pub_nonce2]);
+
+    let session = MusigSession::new(&secp, &musig_key_agg_cache, agg_nonce, msg);
 
     let keypair1 = Keypair::from_secret_key(&secp, &secret_key_share_1);
     let partial_sign1 = session.partial_sign(&secp, sec_nonce1, &keypair1, &musig_key_agg_cache).unwrap();
@@ -149,15 +158,16 @@ fn receivers_address() -> Address {
 /// output taken from a transaction that appears in the chain.
 fn dummy_unspent_transaction_output(
     output_key: XOnlyPublicKey,
-) -> (OutPoint, TxOut) {
-    let script_pubkey = bitcoin::musig2::new_p2tr_script_buf(output_key);
+) -> (OutPoint, TxOut, ScriptBuf) {
+    let tweaked_public_key = TweakedPublicKey::dangerous_assume_tweaked(output_key);
+    let script_pubkey = ScriptBuf::new_p2tr_tweaked(tweaked_public_key);
 
     let out_point = OutPoint {
         txid: Txid::all_zeros(), // Obviously invalid.
         vout: 0,
     };
 
-    let utxo = TxOut { value: DUMMY_UTXO_AMOUNT, script_pubkey };
+    let utxo = TxOut { value: DUMMY_UTXO_AMOUNT, script_pubkey: script_pubkey.clone() };
 
-    (out_point, utxo)
+    (out_point, utxo, script_pubkey)
 }
