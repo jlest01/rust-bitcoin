@@ -28,7 +28,9 @@ use crate::crypto::{ecdsa, taproot};
 use crate::key::{TapTweak, XOnlyPublicKey};
 use crate::prelude::*;
 use crate::sighash::{self, EcdsaSighashType, Prevouts, SighashCache};
-use crate::{Amount, FeeRate, TapLeafHash, TapSighashType};
+use crate::{Amount, FeeRate, TapLeafHash, TapSighash, TapSighashType};
+
+use crate::hashes::Hash;
 
 #[rustfmt::skip]                // Keep public re-exports separate.
 #[doc(inline)]
@@ -444,6 +446,8 @@ impl Psbt {
                         .tap_tweak(secp, input.tap_merkle_root)
                         .to_inner();
 
+                    let msg = msg.to_byte_array();
+
                     #[cfg(feature = "rand-std")]
                     let signature = secp.sign_schnorr(&msg, &key_pair);
                     #[cfg(not(feature = "rand-std"))]
@@ -470,6 +474,8 @@ impl Psbt {
                     for lh in leaf_hashes {
                         let (msg, sighash_type) =
                             self.sighash_taproot(input_index, cache, Some(lh))?;
+
+                        let msg = msg.to_byte_array();
 
                         #[cfg(feature = "rand-std")]
                         let signature = secp.sign_schnorr(&msg, &key_pair);
@@ -561,7 +567,7 @@ impl Psbt {
         input_index: usize,
         cache: &mut SighashCache<T>,
         leaf_hash: Option<TapLeafHash>,
-    ) -> Result<(Message, TapSighashType), SignError> {
+    ) -> Result<(TapSighash, TapSighashType), SignError> {
         use OutputType::*;
 
         if self.signing_algorithm(input_index)? != SigningAlgorithm::Schnorr {
@@ -606,7 +612,7 @@ impl Psbt {
                 } else {
                     cache.taproot_key_spend_signature_hash(input_index, &prev_outs, hash_ty)?
                 };
-                Ok((Message::from(sighash), hash_ty))
+                Ok((sighash, hash_ty))
             }
             _ => Err(SignError::Unsupported),
         }
